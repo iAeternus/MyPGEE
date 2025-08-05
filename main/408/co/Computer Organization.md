@@ -553,23 +553,29 @@ int neg(int x) {
 
 1. 主存块大小 $=$ Cache 块大小
 
-2. Cache 的访问由硬件完成
+2. $k$ 路组相联是 Cache 中 $k$ 个块一组
 
-3. $n$ 行 Cache，块大小为 $m (B)$，主存按字节编址，给定主存单元 $A$
+3. 一次访存时，页表不命中，Cache 也不命中
+
+4. Cache 的访问和缺失处理由硬件完成，TLB 的访问和缺失处理既可以用硬件也可以用软件
+
+5. 页表不命中需要查辅存，Cache 不命中需要查主存，故页表不命中的损失要大于 Cache 不命中的损失
+
+6. $n$ 行 Cache，块大小为 $m (B)$，主存按字节编址，给定主存单元 $A$
 
    * 直接映射：映射到 Cache 单元为 $(A/m) \% n$
    * $k$ 路组相联映射：映射到 Cache 单元为 $(A/m)\%(n/k)$	
 
-4. 主存地址 $A$ 位，按字节编址，Cache 数据区大小为 $D(KB)$，主存块大小为 M(KB)$，采用直接映射和写回法
+7. 主存地址 $A$ 位，按字节编址，Cache 数据区大小为 $D$，主存块大小为 $M$，采用直接映射和写回法
 
    * $Cache 行位数 = 数据位 + Tag位数 + 修改位1b + 有效位1b$
 
    * $数据位 = 主存块大小 M * 每字节位数8$
    * $Tag位数 + Cache行号位数 + 块内地址位数 = 主存地址位数A$
    * $2^{Cache行号位数} = Cache数据区大小D/主存块大小M = Cache行数$（注意这里采用直接映射，每个主存块对应 Cache 一行）
-   * $2^{块内地址位数} = 主存块大小M * 1024$
-5. 主存块号包含标记 Tag 和 Cache 行号
-6. Cache 中比较器的个数
+   * $2^{块内地址位数} = 主存块大小M$
+8. 主存块号包含标记 Tag 和 Cache 行号
+9. Cache 中比较器的个数
    * **全相联映射** 下，每块可以映射到所有 Cache 行（总共有 $n$ 个 Cache 行），因此需要设置 $n$ 个比较器
    * **直接映射** 因为每块只能映射到唯一的 Cache 行，因此只需设置 $1$ 个比较器
    * 而 $k$ **路组相联映射** 需要在对应分组中与 $k$ 个 Cache 行进行比较，因此需设置 $k$ 个比较器
@@ -579,6 +585,64 @@ int neg(int x) {
 ![](assets\Cache替换算法.png)
 
 ![](assets\Cache写策略.png)
+
+### 访存全局观
+
+#### 访存顺序图
+
+```mermaid
+sequenceDiagram
+    participant CPU as CPU
+    participant TLB as TLB
+    participant MMU as MMU/页表
+    participant OS as 操作系统
+    participant Cache as Cache
+    participant DRAM as 主存(DRAM)
+    participant Disk as 辅存(Disk)
+
+    Note over CPU: 访存开始
+    CPU->>TLB: 虚拟地址(VA)查询
+    alt TLB命中
+        TLB-->>CPU: 返回物理页号(PPN)
+    else TLB未命中
+        TLB->>MMU: 页表查询请求
+        MMU->>DRAM: 读取页表项(PTE)
+        alt 页表有效
+            DRAM-->>MMU: 返回PTE
+            MMU->>TLB: 更新TLB条目
+            MMU-->>CPU: 返回物理页号(PPN)
+        else 页无效(缺页)
+            MMU->>OS: 触发缺页异常
+            OS->>Disk: 请求页面数据
+            Disk-->>OS: 返回磁盘页面
+            OS->>DRAM: 分配物理页帧
+            OS->>MMU: 更新页表项
+            OS-->>CPU: 异常返回
+            CPU->>TLB: 重新查询(VA)
+        end
+    end
+
+    CPU->>Cache: 物理地址(PA)查询
+    alt Cache命中
+        Cache-->>CPU: 返回数据
+    else Cache未命中
+        Cache->>DRAM: 请求数据块
+        DRAM-->>Cache: 返回数据块
+        Cache->>Cache: 加载数据块
+        Cache-->>CPU: 返回数据
+    end
+    Note over CPU: 访存完成
+```
+
+#### 访存过程地址字段
+
+| **阶段/组件**     | **输入地址** | **输出/存储内容** | **字段划分**                                   | **字段计算方式**                                             | **核心说明**                                                 |
+| ----------------- | ------------ | ----------------- | ---------------------------------------------- | ------------------------------------------------------------ | ------------------------------------------------------------ |
+| **虚拟地址 (VA)** | -            | 虚拟地址          | $[\text{VPN} \| \text{Offset}]$                | $\begin{aligned} \text{VPN}_b &= A - \log_2(P) \\ \text{Offset}_b &= \log_2(P) \end{aligned}$ | CPU 生成<br>$A$: 地址位数<br>$P$: 页大小(字节)               |
+| **TLB 条目**      | VPN          | PPN + 控制位      | $[\text{Tag} \| \text{PPN} \| \text{Ctrl}]$    | $\begin{aligned} \text{Tag}_b &= \text{VPN}_b - \log_2(S) \\ \text{PPN}_b &= A_p - \text{Offset}_b \end{aligned}$ | 硬件加速翻译<br>$S$: TLB 组数<br>$A_p$: 物理地址位数<br>$Ctrl$: V/D/A 位 |
+| **页表项 (PTE)**  | VPN          | PPN + 控制位      | $[\text{PPN} \| \text{Ctrl}]$                  | $\text{PPN}_b = A_p - \log_2(P)$                             | 内存中映射表<br>$Ctrl$: Valid/Dirty/Accessed 位<br>多级页表递归查询 |
+| **物理地址 (PA)** | PPN + Offset | 物理地址          | $[\text{PPN} \| \text{Offset}]$                | 直接拼接                                                     | 硬件实时生成<br>$Offset$ 继承自 VA                           |
+| **Cache 解析**    | PA           | 缓存数据位置      | $[\text{Tag} \| \text{Index} \| \text{B.Off}]$ | $\begin{aligned} \text{B.Off}_b &= \log_2(B) \\ \text{Index}_b &= \log_2(\frac{C}{B \times W}) \\ \text{Tag}_b &= A_p - (\text{Index}_b + \text{B.Off}_b) \end{aligned}$ | 物理索引<br>$B$: 块大小(字节)<br>$C$: Cache 大小<br>$W$: 相联度 |
 
 ## 第 4 章 指令系统
 
