@@ -687,8 +687,107 @@ sequenceDiagram
    | **相对寻址**       | $EA = (PC) + A$       | **1 次**（取操作数）              | **优**：支持代码位置无关，便于程序浮动。<br>**缺**：偏移量范围有限。 |
    | **堆栈寻址**       | 隐式（如 `PUSH/POP`） | 硬堆栈 **不访存**，软堆栈访存 **1 次** | **优**：简化参数传递，支持递归。<br>**缺**：随机访问效率低。 |
 
+### 程序的机器级代码表示
+
+#### 常用 x86 汇编指令
+
+1. 数据的来源
+   * 寄存器：
+     * eax # 32bit
+     * ax # 16bit
+     * ah/al # 8bit
+   * 主存：中括号括起来的
+     * dword ptr [地址] # 32it
+     * word ptr [地址] # 16bit 
+     * byte ptr [地址] # 8bit
+   * 立即数：直接写数据（常量）
+2. 寄存器
+   * 通用寄存器：eax ebx ecx edx
+   * 变址寄存器
+     * esi
+     * edi
+   * ebp 堆栈基指针 Base Pointer
+   * esp 堆栈顶指针 Stack Pointer
+
+```assembly
+# 数据传送指令
+mov d, s  # d <= s，d不能为常量
+push eax  # 将eax的值入栈
+pop eax  # 弹出栈顶元素送到eax
+
+# 算数和逻辑运算指令
+add d, s  # d <- d + s
+sub d, s  # d <- d - s
+mul d, s  # d <- d * s 无符号数
+imul d, s  # d <- d * s 有符号数
+div s  # edx:eax / s，商存入eax，余数存入edx 无符号数
+idiv s  # edx:eax / s，商存入eax，余数存入edx 无符号数
+neg d  # 取负
+inc d  # 自增
+dec d  # 自减
+
+and d, s  # d <- d & s
+or d, s  # d <- d | s
+not d  # d <- ~d
+xor d, s  # d <- d ^ s
+shl d, s  # d <- d << s 通常s是常量
+shr d, s  # d <- d >> s 通常s是常量
+
+# 控制流指令
+jmp <label>  # 无条件跳转到<label>
+
+cmp eax, ebx  # 比较eax的值和ebx的值，相当于sub指令，不保存结果只设置PSW
+test eax, eax  # 测试eax是否为零，相当于and指令，不保存结果只设置PSW
+je <label>  # jump when equal，ZF == 1 ?
+jz <label>  # jump when last result was zero
+jne <label>  # jump when not equal，ZF == 0 ?
+jg <label>  # jump when greater than，ZF == 0 && SF == OF ?
+jge <label>  # jump when greater than or equal to，SF == OF ?
+jl <label>  # jump when less than，SF != OF ?
+jle <label>  # jump when less than or equal to，SF != OF || ZF == 1 ?
+
+call <label>  # 调用<label>函数
+ret  # 函数返回
+```
+
+#### AT&T 格式和 Intel 格式
+
+![AT&T 格式和 Intel 格式](assets\AT&T格式和Intel格式.png)
+
+#### 函数调用机器级代码
+
+![栈帧结构](assets\栈帧结构.png)
+
+![函数调用机器级代码](assets\函数调用机器级代码.png)
+
+### CSIC和RISC
+
+| 类别           | CISC                           | RISC                     |
+| -------------- | ------------------------------ | ------------------------ |
+| 指令系统       | 复杂，庞大                     | 简单，精简               |
+| 指令数目       | 一般大于 200 条                | 一般小于 100 条          |
+| 指令字长       | 不固定                         | 定长                     |
+| 可访存指令     | 不加限制                       | 只有 Load/Store 指令     |
+| 指令执行时间   | 相差较大                       | 绝大多数在一个周期内完成 |
+| 指令使用频度   | 相差很大                       | 都比较常用               |
+| 通用寄存器数量 | 较少                           | 多                       |
+| 目标代码       | 难以用优化编译生成高效目标代码 | 采用优化编译生成高效代码 |
+| 控制方式       | 绝大多数为微程序控制           | 绝大多数为组合逻辑控制   |
+| 指令流水线     | 可以通过一定方式实现           | 必须实现                 |
 
 ## 第 5 章 中央处理器
+
+### CPU基本结构
+
+![](F:\Develop\others\MyPGEE\main\408\co\assets\CPU基本结构.png)
+
+1. PC（IP）
+   1. **字节地址表示**：
+      1. $PC位数 = 存储器地址位数$ (由存储器容量决定)
+   2. **字地址表示**：
+      1. 指令需**边界对齐**存放
+      2. $PC位数 = 存储器地址位数 - \log_2{指令字长字节数}$
+   3. **决定因素**：PC位数最终取决于 **存储器容量** 和 **指令字长**
 
 ## 第 6 章 总线
 
@@ -705,6 +804,8 @@ sequenceDiagram
 ### 数据寻址与指令寻址
 
 ### 高级语言与机器语言的对应
+
+// TODO 4.3
 
 ### 数据通路的功能结构
 
