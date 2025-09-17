@@ -110,6 +110,25 @@ $$
 
 ![](assets\二叉树性质例1解答.png)
 
+```cpp
+#include <bits/stdc++.h>
+
+int main() {
+    int n = 100, k = 7;
+    int max_m = 1 << (k - 2);
+    int max_lk = 0;
+    for (int m = 1; m <= max_m; ++m) {
+        int s = m;
+        for (int i = 1; i <= k - 2; ++i) {
+            s += ceil(1.0 * m / (1 << i));
+        }
+        int s_min = std::max(n - 2 * m, s);
+        max_lk = std::max(max_lk, n - s_min);
+    }
+    std::cout << max_lk << std::endl;
+}
+```
+
 ## 树的性质
 
 1. 树的节点数 $n$ 等于所有节点的度数之和加 $1$
@@ -184,3 +203,11 @@ rk = [0, 1, 0, 2, 0]
      /|\ \
     0 1 2 4
 ```
+
+## 二叉排序树、平衡二叉树
+
+1. 左旋：顺时针旋转，冲突的右孩变左孩
+
+   右旋：逆时针旋转，冲突的左孩变右孩
+
+![](assets\AVL树旋转.png)
