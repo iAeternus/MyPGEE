@@ -594,68 +594,88 @@ int neg(int x) {
 
 ### 访存全局观
 
-#### 访存顺序图
+#### 内存访问全局流程
+
+以 `load arr[i]` 为例，涉及计组/OS 交叉领域
 
 ```mermaid
 sequenceDiagram
-    participant CPU as CPU
-    participant TLB as TLB
-    participant MMU as MMU/页表
-    participant OS as 操作系统
-    participant Cache as Cache
-    participant DRAM as 主存(DRAM)
-    participant Disk as 辅存(Disk)
+    autonumber
+    participant CPU as 🧠 CPU<br/>(执行单元)
+    participant Cache as ⚡ Cache<br/>(L1 / L2 / L3)
+    participant MMU as 🔄 MMU<br/>(含TLB)
+    participant PT as 📘 Page Table<br/>(页表)
+    participant MEM as 🧩 Main Memory<br/>(DRAM)
+    participant DISK as 💾 Disk / SSD<br/>(外存)
+    participant OS as 🧰 OS Kernel<br/>(缺页处理)
 
-    Note over CPU: 访存开始
-    CPU->>TLB: 虚拟地址(VA)查询
-    alt TLB命中
-        TLB-->>CPU: 返回物理页号(PPN)
-    else TLB未命中
-        TLB->>MMU: 页表查询请求
-        MMU->>DRAM: 读取页表项(PTE)
-        alt 页表有效
-            DRAM-->>MMU: 返回PTE
-            MMU->>TLB: 更新TLB条目
-            MMU-->>CPU: 返回物理页号(PPN)
-        else 页无效(缺页)
-            MMU->>OS: 触发缺页异常
-            OS->>Disk: 请求页面数据
-            Disk-->>OS: 返回磁盘页面
-            OS->>DRAM: 分配物理页帧
-            OS->>DRAM: 写入页面数据
-            OS->>MMU: 更新页表项
-            OS->>TLB: 刷新相关TLB条目
-            OS-->>CPU: 异常返回
-            CPU->>TLB: 重新查询(VA)
+    %% ---------------- CPU 阶段 ----------------
+    CPU->>CPU: 计算有效地址 EA = 基址 + i×元素大小<br/>(变址寻址)
+    CPU->>CPU: 加上逻辑基址 → 得到虚拟地址 VA
+    CPU->>Cache: 使用 VA 查询 L1 / L2 / L3 Cache
+    alt Cache 命中
+        Cache-->>CPU: 返回数据 → MDR → 执行单元 ✅
+    else Cache 未命中
+        CPU->>MMU: 将虚拟地址 VA 送入 MMU 请求地址转换
+    end
+
+    %% ---------------- 地址映射阶段 ----------------
+    MMU->>MMU: 权限检查（页表项标志：R/W/X/U等）
+    MMU->>MMU: 拆分 VA → [页号, 页内偏移]
+    MMU->>MMU: 查询 TLB（页号→物理页号）
+
+    alt TLB 命中
+        MMU->>CPU: 得到物理地址 PA
+        CPU->>MEM: 访问主存 (PA)
+    else TLB 未命中
+        MMU->>PT: 访问页表查找映射
+        alt 页表项有效
+            PT-->>MMU: 返回物理页号
+            MMU->>MMU: 更新 TLB（缓存该映射）
+            MMU->>CPU: 得到物理地址 PA
+            CPU->>MEM: 访问主存 (PA)
+        else 页表项无效（缺页）
+            MMU->>CPU: 触发缺页中断 ⚠️
+            CPU->>OS: 切换内核态，保存上下文
+            OS->>DISK: 读取缺失页面（按页号查找磁盘块）
+            DISK-->>OS: 返回页面数据
+            OS->>MEM: 将页面载入物理内存
+            OS->>PT: 更新页表项（标记有效 + 物理页号）
+            OS->>MMU: 刷新TLB（写入新映射）
+            OS-->>CPU: 恢复用户态，重新执行被中断指令
+            CPU->>MEM: 再次访问主存 (PA)
         end
     end
 
-    Note over CPU: 组合PPN+页内偏移→物理地址(PA)
-    CPU->>Cache: 物理地址(PA)查询
-    alt Cache命中
-        Cache-->>CPU: 返回数据
-    else Cache未命中
-        Cache->>DRAM: 请求数据块
-        alt 数据在DRAM
-            DRAM-->>Cache: 返回数据块
-        else DRAM缺页
-            DRAM->>OS: 触发二次缺页
-        end
-        Cache->>Cache: 加载数据块
-        Cache-->>CPU: 返回数据
+    %% ---------------- 主存访问阶段 ----------------
+    MEM->>MEM: 解析物理地址 (Channel/Bank/Row/Col)
+    MEM-->>Cache: 返回整个 Cache Line（通常64B）
+    par Cache 回填
+        Cache->>Cache: 写入该 Cache Line<br/>更新 Tag 和 Valid 位
+    and MDR 接收
+        Cache-->>CPU: 从回填行中取出目标字节 → 写入 MDR
     end
-    Note over CPU: 访存完成
+
+    %% ---------------- 返回阶段 ----------------
+    CPU-->>CPU: 从 MDR 取数 → 执行指令完成 ✅
+    note over CPU,Cache: 逻辑顺序为“先写 Cache 再送 MDR”，<br/>硬件实现中二者几乎同步（流水并行）
+
+
 ```
 
 #### 访存过程地址字段
 
-| **阶段/组件**     | **输入地址** | **输出/存储内容** | **字段划分**                                   | **字段计算方式**                                             | **核心说明**                                                 |
-| ----------------- | ------------ | ----------------- | ---------------------------------------------- | ------------------------------------------------------------ | ------------------------------------------------------------ |
-| **虚拟地址 (VA)** | -            | 虚拟地址          | $[\text{VPN} \| \text{Offset}]$                | $\begin{aligned} \text{VPN}_b &= A - \log_2(P) \\ \text{Offset}_b &= \log_2(P) \end{aligned}$ | CPU 生成<br>$A$: 地址位数<br>$P$: 页大小(字节)               |
-| **TLB 条目**      | VPN          | PPN + 控制位      | $[\text{Tag} \| \text{PPN} \| \text{Ctrl}]$    | $\begin{aligned} \text{Tag}_b &= \text{VPN}_b - \log_2(S) \\ \text{PPN}_b &= A_p - \text{Offset}_b \end{aligned}$ | 硬件加速翻译<br>$S$: TLB 组数<br>$A_p$: 物理地址位数<br>$Ctrl$: V/D/A 位 |
-| **页表项 (PTE)**  | VPN          | PPN + 控制位      | $[\text{PPN} \| \text{Ctrl}]$                  | $\text{PPN}_b = A_p - \log_2(P)$                             | 内存中映射表<br>$Ctrl$: Valid/Dirty/Accessed 位<br>多级页表递归查询 |
-| **物理地址 (PA)** | PPN + Offset | 物理地址          | $[\text{PPN} \| \text{Offset}]$                | 直接拼接                                                     | 硬件实时生成<br>$Offset$ 继承自 VA                           |
-| **Cache 解析**    | PA           | 缓存数据位置      | $[\text{Tag} \| \text{Index} \| \text{B.Off}]$ | $\begin{aligned} \text{B.Off}_b &= \log_2(B) \\ \text{Index}_b &= \log_2(\frac{C}{B \times W}) \\ \text{Tag}_b &= A_p - (\text{Index}_b + \text{B.Off}_b) \end{aligned}$ | 物理索引<br>$B$: 块大小(字节)<br>$C$: Cache 大小<br>$W$: 相联度 |
+注：408 中 Cache 默认采用物理地址作为输入，若采用虚拟地址 Cache，输入也可为虚拟地址；本表以物理地址 Cache 为准
+
+| 模块      | 功能                   | 输入                | 输出              | 地址字段结构（典型）                                         | 说明                                     |
+| --------- | ---------------------- | ------------------- | ----------------- | ------------------------------------------------------------ | ---------------------------------------- |
+| **CPU**   | 生成虚拟地址           | 程序计数器 / 偏移量 | 虚拟地址          | [页号, 页内偏移]                                             | 指令执行过程中由逻辑地址计算产生虚拟地址 |
+| **Cache** | 主存数据缓存           | 物理地址            | Cache 行（主存块） | 直接映射：$[tag, 行号, 块内地址]$ 全相联：$[tag, 块内地址]$ 组相联：$[tag, 组号, 块内地址]$ | 命中则直接读写 Cache，否则访问主存        |
+| **MMU**   | 地址变换单元           | 虚拟地址            | 物理地址          | [物理页号, 页内偏移]                                         | 综合 TLB/页表结果生成最终物理地址         |
+| **TLB**   | 页表缓存，加速地址转换 | 虚拟页号            | 物理页号          | 直接映射：$[tag, 行号, 块内地址]$ 全相联：$[tag, 块内地址]$ 组相联：$[tag, 组号, 块内地址]$ | 若 TLB 命中则无需访问页表                  |
+| **页表**  | 维护虚拟页与物理页映射 | 虚拟页号            | 物理页号          | [页号, 页内偏移]                                             | 若 TLB 未命中则访问页表完成地址变换        |
+| **主存**  | 存储主存块             | 物理地址            | 主存块数据        | -                                                            | Cache 未命中时访问此处                    |
+| **辅存**  | 存储换出页             | 页号                | 页数据            | -                                                            | 缺页中断时从辅存调入主存                 |
 
 ## 第 4 章 指令系统
 
@@ -938,6 +958,11 @@ D[微操作] -- 一对一 --> E[微命令]
 1. **顺序控制**：下地址 = 当前地址 + 1
 2. **条件转移控制**：下地址 = 微指令字段给定地址（若条件成立），否则 = 当前地址 + 1
 3. **分支表（映射法）**：根据机器指令操作码查表，得到对应微程序入口地址
+
+##### 串行微程序控制器和并行微程序控制器
+
+- **串行**：取指 → 执行 → 取指 → 执行 ……
+- **并行**：执行当前微指令的同时，预取下一条微指令（两级流水线，只有两个步骤）
 
 ```mermaid
 sequenceDiagram
