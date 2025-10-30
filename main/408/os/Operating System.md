@@ -361,7 +361,7 @@ A. $54\mu s$  	B. $73\mu s$ 	 C. $74\mu s$ 	D. $75\mu s$
 - $P_2$ 到达时间 = $T - 15\mu s$  
 - $P_3$ 到达时间 = $T - 18\mu s$
 
-![](assets\处理机调度真题.jpg)
+<img src="./assets/处理机调度真题.jpg" style="zoom:25%;" />
 
 #### 多处理机调度
 
